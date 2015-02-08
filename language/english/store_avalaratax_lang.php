@@ -2,8 +2,9 @@
 
 $lang = array(
     'account_number'         => 'Account Number',
-    'customer_code'          => 'Company Code',
-    'enabled'                 => 'Enable',
+    'company_code'           => 'Company Code',
+    'company_code_subtext'   => 'The code that identifies the company in the AvaTax account in which the document should be posted. This code is declared during the company setup in the AvaTax Admin Console. If no value is passed, the document will be assigned to the default company.',
+    'enabled'                => 'Enable',
     'license_key'            => 'License Key',
     'origin_address1'        => 'Origin: Street',
     'origin_address2'        => 'Origin: Street 2',

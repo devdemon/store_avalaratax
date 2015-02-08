@@ -5,6 +5,14 @@ if (defined('PATH_THIRD')) {
 }
 
 use Store\Model\Tax;
+use Guzzle\Http\Client;
+use Guzzle\Http\Exception\BadResponseException;
+use AvaTax\Line;
+use AvaTax\ATConfig;
+use AvaTax\Address;
+use AvaTax\GetTaxRequest;
+use AvaTax\TaxServiceSoap;
+use AvaTax\SeverityLevel;
 
 class Store_avalaratax_ext
 {
@@ -26,6 +34,10 @@ class Store_avalaratax_ext
         $this->settings = $settings;
 
         $this->mapDefaultSettings($settings);
+
+        if (ee()->store) {
+            ee()->store->composer->setPsr4("AvaTax\\", __DIR__ . "/AvaTax");
+        }
     }
 
     public function store_order_taxes($order, $taxes)
@@ -34,12 +46,142 @@ class Store_avalaratax_ext
             $taxes = ee()->extensions->last_call;
         }
 
+        if ($this->settings['enabled'] != 'yes') {
+            return $taxes;
+        }
+
+        $taxes = array();
+        $tax = $this->getAvalaraTax($order, 'sales_order');
+
+        if ($tax) {
+            $taxes[] = $tax;
+        }
+
         return $taxes;
     }
 
-    public function store_order_complete_end($order, $status, $history, $member_id, $message)
+    public function store_order_complete_end($order)
     {
 
+    }
+
+    public function getAvalaraTax($order, $action='sales_order')
+    {
+        if ($this->settings['enabled'] != 'yes') {
+            return false;
+        }
+
+        // No Zip ? Quit
+        if (!$order->shipping_postcode) {
+            return false;
+        }
+
+        // FREE?
+        if (!$order->order_subtotal_inc_discount) {
+            return false;
+        }
+
+        $tax = Tax::find($this->settings['tax_id']);
+
+        if (!$tax) {
+            $this->ee->output->show_user_error(false, array('Store: MISSING TAX ID'));
+        }
+
+        $atConfig = new ATConfig('Production', array(
+            'url'       => 'https://avatax.avalara.net',
+            'account'   => $this->settings['account_number'],
+            'license'   => $this->settings['license_key'],
+            'trace'     => false, // change to false for development
+            'client' => 'DevDemon_Store',
+            'name' => self::VERSION)
+        );
+
+        $taxSvc = new TaxServiceSoap('Production');
+        $getTaxRequest = new GetTaxRequest();
+
+        //Document Level
+        $getTaxRequest->setCompanyCode($this->settings['company_code']);
+        $getTaxRequest->setDocType((($action == 'sales_invoice') ? 'SalesInvoice' : 'SalesOrder'));
+        $getTaxRequest->setDocCode('INV' . $order->id);
+        $getTaxRequest->setDocDate(date('Y-m-d'));
+        $getTaxRequest->setCustomerCode(($order->member_id) ? $order->member_id : 'GUEST' );
+
+        //Origin Address
+        $address01 = new Address();
+        $address01->setLine1($this->settings['origin_address1']);
+        $address01->setLine2($this->settings['origin_address2']);
+        $address01->setCity($this->settings['origin_city']);
+        $address01->setRegion($this->settings['origin_state']);
+        $address01->setPostalCode($this->settings['origin_postcode']);
+        $address01->setCountry($this->settings['origin_country']);
+        $getTaxRequest->setOriginAddress($address01);
+
+        //Destination Address
+        $address02 = new Address();
+        $address02->setLine1($order->shipping_address1);
+        $address02->setLine2($order->shipping_address2);
+        $address02->setCity($order->shipping_city);
+        $address02->setRegion($order->shipping_state);
+        $address02->setPostalCode($order->shipping_postcode);
+        $address02->setCountry($order->shipping_country);
+        $getTaxRequest->setDestinationAddress($address02);
+
+
+        $lines = array();
+
+        foreach ($order->items as $item) {
+            if (ee()->store->tax->is_item_taxable($item, $tax) == false) continue;
+
+            $line = new Line();
+            $line->setNo($item->id);
+            $line->setItemCode($item->sku);
+            $line->setDescription($item->title);
+            $line->setQty($item->item_qty);
+            $line->setAmount($item->item_subtotal_inc_discount);
+            //$line1->setTaxCode("NT");
+
+            $lines[] = $line;
+        }
+
+        // No Items? Stop here then
+        if (count($lines) == 0) {
+            return false;
+        }
+
+        // Compile all three lines into an array
+        $getTaxRequest->setLines($lines);
+
+        try {
+            $getTaxResult = $taxSvc->getTax($getTaxRequest);
+
+            if ($getTaxResult->getResultCode() == SeverityLevel::$Success) {
+
+
+                $tax->rate = $getTaxResult->getTotalTax() / $order->order_subtotal_inc_discount;
+                $tax->enabled = 1;
+                $tax->country_code = null;
+                $tax->state_code = null;
+                $tax->tax_override = true;
+                $tax->tax_override_amount = $getTaxResult->getTotalTax();
+
+                return $tax;
+            } else {
+                foreach ($getTaxResult->getMessages() as $message) {
+                  //echo $message->getName() . ": " . $message->getSummary() . "\n";
+                }
+            }
+
+        } catch (SoapFault $exception) {
+            $message = "Exception: ";
+
+            if ($exception) {
+                $message .= $exception->faultstring;
+            }
+
+            echo $message . "\n";
+            echo $taxSvc->__getLastRequest() . "\n";
+            echo $taxSvc->__getLastResponse() . "\n ";
+        }
     }
 
     public function settings_form($current)
@@ -65,7 +207,7 @@ class Store_avalaratax_ext
 
         $vars['settings']['account_number'] = form_input('account_number', $this->settings['account_number']);
         $vars['settings']['license_key'] = form_input('license_key', $this->settings['license_key']);
-        $vars['settings']['customer_code'] = form_input('customer_code', $this->settings['customer_code']);
+        $vars['settings']['company_code'] = form_input('company_code', $this->settings['company_code']);
 
         // Tax ID
         $items = array('' => 'Select Tax');
@@ -108,7 +250,7 @@ class Store_avalaratax_ext
         $defaults['enabled'] = 'yes';
         $defaults['account_number'] = '';
         $defaults['license_key'] = '';
-        $defaults['customer_code'] = '';
+        $defaults['company_code'] = '';
         $defaults['test_mode'] = 'yes';
         $defaults['tax_id'] = '';
         $defaults['origin_address1'] = '';

@@ -16,7 +16,7 @@ use AvaTax\SeverityLevel;
 
 class Store_avalaratax_ext
 {
-    const VERSION = '1.0.3';
+    const VERSION = '1.0.0';
 
     public $name = 'Store Avalara Tax';
     public $version = self::VERSION;

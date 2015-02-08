@@ -62,7 +62,7 @@ class Store_avalaratax_ext
 
     public function store_order_complete_end($order)
     {
-
+        $this->getAvalaraTax($order, 'sales_invoice');
     }
 
     public function getAvalaraTax($order, $action='sales_order')
@@ -101,10 +101,11 @@ class Store_avalaratax_ext
 
         //Document Level
         $getTaxRequest->setCompanyCode($this->settings['company_code']);
-        $getTaxRequest->setDocType((($action == 'sales_invoice') ? 'SalesInvoice' : 'SalesOrder'));
+        $getTaxRequest->setDocType(($action == 'sales_invoice') ? 'SalesInvoice' : 'SalesOrder');
         $getTaxRequest->setDocCode('INV' . $order->id);
         $getTaxRequest->setDocDate(date('Y-m-d'));
         $getTaxRequest->setCustomerCode(($order->member_id) ? $order->member_id : 'GUEST' );
+        $getTaxRequest->setCommit(($action == 'sales_invoice') ? true : false);
 
         //Origin Address
         $address01 = new Address();

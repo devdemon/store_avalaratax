@@ -87,16 +87,7 @@ class Store_avalaratax_ext
             $this->ee->output->show_user_error(false, array('Store: MISSING TAX ID'));
         }
 
-        $atConfig = new ATConfig('Production', array(
-            'url'       => 'https://avatax.avalara.net',
-            'account'   => $this->settings['account_number'],
-            'license'   => $this->settings['license_key'],
-            'trace'     => false, // change to false for development
-            'client' => 'DevDemon_Store',
-            'name' => self::VERSION)
-        );
-
-        $taxSvc = new TaxServiceSoap('Production');
+        $taxSvc = $this->getTaxSvc();
         $getTaxRequest = new GetTaxRequest();
 
         //Document Level
@@ -190,11 +181,16 @@ class Store_avalaratax_ext
         ee()->load->helper('form');
         ee()->load->library('table');
 
+        // Are We Testing?
+        if (ee()->input->get('action') == 'test_connection') {
+            return $this->testConnection();
+        }
+
         $this->mapDefaultSettings($current);
 
         $vars = array();
 
-        // Test Mode
+        // Enabled?
         $vars['settings']['enabled'] = form_dropdown('enabled', array(
             'yes' => lang('yes'),
             'no' => lang('no'),
@@ -204,11 +200,11 @@ class Store_avalaratax_ext
         $vars['settings']['test_mode'] = form_dropdown('test_mode', array(
             'yes' => lang('yes'),
             'no' => lang('no'),
-        ), $this->settings['test_mode']);
+        ), $this->settings['test_mode'], ' class="avalara_test" ');
 
-        $vars['settings']['account_number'] = form_input('account_number', $this->settings['account_number']);
-        $vars['settings']['license_key'] = form_input('license_key', $this->settings['license_key']);
-        $vars['settings']['company_code'] = form_input('company_code', $this->settings['company_code']);
+        $vars['settings']['account_number'] = form_input('account_number', $this->settings['account_number'], ' class="avalara_test" ');
+        $vars['settings']['license_key'] = form_input('license_key', $this->settings['license_key'], ' class="avalara_test" ');
+        $vars['settings']['company_code'] = form_input('company_code', $this->settings['company_code'], ' class="avalara_test" ');
 
         // Tax ID
         $items = array('' => 'Select Tax');
@@ -241,6 +237,64 @@ class Store_avalaratax_ext
             'message_success',
             lang('preferences_updated')
         );
+    }
+
+    private function testConnection()
+    {
+        $out = array();
+        $out['success'] = false;
+        $out['test_mode'] =  ee()->input->get('test_mode');
+        $out['account_number'] =  ee()->input->get('account_number');
+        $out['license_key'] =  ee()->input->get('license_key');
+        $out['company_code'] =  ee()->input->get('company_code');
+        $out['error'] = '';
+
+        try {
+            $taxSvc = $this->getTaxSvc($out);
+            $pingResult = $taxSvc->ping('');
+
+            if ($pingResult->getResultCode() == SeverityLevel::$Success) {
+                $out['success'] = true;
+            } else {
+                foreach ($pingResult->Messages() as $messages) {
+                    $out['error'] .= $messages->Name() . ': ' . $messages->Summary() . "\n";
+                }
+            }
+        } catch (SoapFault $e) {
+            $out['error'] = "Exception: ";
+
+            if ($e) {
+                $out['error'] .= $e->faultstring;
+            }
+
+            $out['error'] . "\n";
+            $out['error'] .= $taxSvc->__getLastRequest() . "\n";
+            $out['error'] .= $taxSvc->__getLastResponse() . "\n   ";
+        }
+
+        exit(json_encode($out));
+    }
+
+    private function getTaxSvc($config=array())
+    {
+        $settings = $config ? $config : $this->settings;
+        $url = 'https://avatax.avalara.net';
+
+        if ($settings['test_mode'] == 'yes') {
+            $url = 'https://development.avalara.net';
+        }
+
+        $atConfig = new ATConfig('Production', array(
+                'url'       => $url,
+                'account'   => $settings['account_number'],
+                'license'   => $settings['license_key'],
+                'trace'     => false, // change to false for development
+                'client' => 'DevDemon_Store',
+                'name' => self::VERSION
+            )
+        );
+
+        return new TaxServiceSoap('Production');
     }
 
     private function mapDefaultSettings($current=false)
